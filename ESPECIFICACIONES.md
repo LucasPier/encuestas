@@ -1,6 +1,6 @@
 # ESPECIFICACIONES DEL SISTEMA — Encuestas Políticas y de Opinión Pública
 
-> **Versión:** 1.1.0  
+> **Versión:** 1.2.0  
 > **Fecha:** Junio 2026  
 > **Filosofía:** Spec-as-Source — este documento es la única fuente de verdad del sistema.  
 > **Nota:** El historial de cambios se gestiona exclusivamente mediante commits de Git.
@@ -21,7 +21,7 @@
 10. [Toma de Muestras — PWA Encuestadores](#10-toma-de-muestras--pwa-encuestadores)
 11. [Resultados y Análisis](#11-resultados-y-análisis)
 12. [Generación de Informes](#12-generación-de-informes)
-13. [Notificaciones](#13-notificaciones)
+13. [Notificaciones y Auditoría](#13-notificaciones-y-auditoría)
 14. [Sitio Web de Publicación](#14-sitio-web-de-publicación)
 15. [PWA de Encuestadores — UX/UI](#15-pwa-de-encuestadores--uxui)
 16. [PWA de Administración — UX/UI](#16-pwa-de-administración--uxui)
@@ -31,6 +31,7 @@
 20. [Filosofía Spec-as-Source y Desarrollo con IA](#20-filosofía-spec-as-source-y-desarrollo-con-ia)
 21. [Alcance Geográfico y Escalabilidad](#21-alcance-geográfico-y-escalabilidad)
 22. [Consideraciones Futuras](#22-consideraciones-futuras)
+23. [Límites del Sistema y Política de Datos](#23-límites-del-sistema-y-política-de-datos)
 
 ---
 
@@ -198,8 +199,8 @@ Los roles pueden **acumularse**, excepto para administradores y súper administr
 | Rol                  | Descripción |
 |----------------------|-------------|
 | **Encuestador**      | Realiza encuestas en el campo. Accede a la PWA de encuestadores. Ve trabajos asignados, toma encuestas y reporta incidencias. |
-| **Supervisor**       | Accede a la PWA de administración con permisos limitados. Puede gestionar la asignación de encuestadores a puntos de muestreo, supervisar el progreso de los trabajos de campo y monitorear a todos los encuestadores del sistema. |
-| **Analista de datos** | Accede a la PWA de administración con permisos limitados. Puede consultar y analizar resultados, generar informes y hacer seguimiento de trabajos de campo. No puede gestionar usuarios ni configurar el sistema. |
+| **Supervisor**       | Accede a la PWA de administración con permisos limitados. Puede gestionar la **asignación de encuestadores a puntos de muestreo dentro de los trabajos de campo**, supervisar el progreso de los trabajos de campo y monitorear a todos los encuestadores del sistema. No puede crear, editar ni eliminar puntos de muestreo como entidades independientes. |
+| **Analista de datos** | Accede a la PWA de administración con permisos limitados. Puede consultar y analizar resultados (incluyendo lectura de trabajos de campo y acceso al mapa de monitoreo), generar informes y hacer seguimiento de trabajos de campo. No puede gestionar usuarios, editar configuraciones ni modificar entidades del sistema. |
 | **Administrador**    | Acceso completo a la PWA de administración. Gestiona usuarios (excepto administradores), trabajos de campo, encuestas, puntos de muestreo, resultados y configuración del sistema. No puede crear ni eliminar administradores. |
 | **Súper Administrador** | Mismas capacidades que el administrador, con la diferencia de que es el único que puede crear y eliminar cuentas de administrador. Gestiona la organización y la administración global del sistema. |
 
@@ -218,7 +219,7 @@ Cada usuario tendrá un perfil con los siguientes campos:
 | Rol(es) asignado(s)  | Sí          | Asignado por administradores. |
 | Estado               | Sí          | Activo, archivado, eliminado (soft). |
 
-El propio usuario puede actualizar su nombre, teléfono, imagen de perfil y contraseña. Los administradores pueden actualizar cualquier campo e impersonar o archivar cualquier usuario (excepto súper administradores).
+El propio usuario puede actualizar su nombre, teléfono, imagen de perfil y contraseña. Los administradores pueden actualizar cualquier campo y archivar cualquier usuario (excepto súper administradores).
 
 ### 5.4 Grupos de Encuestadores
 
@@ -236,7 +237,7 @@ Los encuestadores pueden organizarse en **grupos** para facilitar la asignación
 ### 6.1 Métodos de Autenticación
 
 - **Teléfono / Email / Username + contraseña:** el usuario puede identificarse con cualquiera de los tres identificadores.
-- **Google OAuth:** inicio de sesión mediante botón de Google.
+- **Google OAuth:** inicio de sesión mediante botón de Google. La vinculación de la cuenta de Google con el usuario del sistema se realiza por **match automático de email**: si el email de la cuenta Google coincide con el email registrado del usuario, la cuenta queda vinculada automáticamente en el primer login con Google. Si el email no existe en el sistema, el acceso se rechaza con un mensaje claro (no existe registro libre). El usuario puede desvincular o re-vincular su cuenta de Google desde la pantalla de Perfil.
 
 ### 6.1.1 Flujo de Login en Steps
 
@@ -251,10 +252,10 @@ El proceso de inicio de sesión se divide en **dos pasos** en todas las aplicaci
 
 Se utiliza un esquema de **doble token**:
 
-| Token          | Duración         | Descripción |
-|----------------|------------------|-------------|
-| Access Token   | 15–60 minutos    | Token de corta duración para acceder a los endpoints protegidos. |
-| Refresh Token  | 7–30 días        | Token de larga duración almacenado de forma segura (httpOnly cookie). Permite renovar el access token sin volver a pedir credenciales. |
+| Token          | Duración (configurable) | Default recomendado | Descripción |
+|----------------|-------------------------|---------------------|-------------|
+| Access Token   | 15–60 minutos           | **30 minutos**      | Token de corta duración para acceder a los endpoints protegidos. |
+| Refresh Token  | 7–30 días               | **14 días**         | Token de larga duración almacenado de forma segura (httpOnly cookie). Permite renovar el access token sin volver a pedir credenciales. |
 
 ### 6.3 Recuperación de Contraseña
 
@@ -381,7 +382,11 @@ La interfaz de gestión de puntos de muestreo utiliza la **Google Maps JavaScrip
 Borrador → Publicada → Activa → Pausada → Finalizada → Archivada
 ```
 
-Mismo comportamiento que el ciclo de vida de los trabajos de campo. Una encuesta **publicada genera automáticamente una nueva versión**, preservando la versión anterior para mantener la integridad de los datos históricos.
+Mismo comportamiento que el ciclo de vida de los trabajos de campo, con la siguiente regla de interacción:
+
+> **El Trabajo de Campo actúa como interruptor maestro.** Si un trabajo está pausado o finalizado, no se puede registrar ninguna encuesta, independientemente del estado interno de las encuestas asignadas. El estado de una encuesta no se modifica en cascada al cambiar el estado del trabajo: ambos estados coexisten y el sistema evalúa ambos para determinar si se puede tomar una muestra. Una misma encuesta puede estar en estado «Activa» en un trabajo de campo y en estado «Pausada» en otro simultáneamente.
+
+Una encuesta queda bloqueada al publicarse. Si se modifica posteriormente, el sistema crea automáticamente una nueva versión, preservando la anterior para mantener la integridad de los datos históricos.
 
 ### 9.2 Tipos de Preguntas
 
@@ -413,7 +418,7 @@ Las preguntas pueden organizarse en **secciones** para estructurar visualmente l
 
 ### 9.5 Versionado
 
-Cuando una encuesta en estado **Publicada** es modificada, el sistema crea automáticamente una nueva versión. Las respuestas históricas siempre quedan vinculadas a la versión de la encuesta con la que fueron tomadas.
+Cuando una encuesta en estado **Publicada** es modificada, el sistema crea automáticamente una nueva versión. Las respuestas históricas siempre quedan vinculadas a la versión de la encuesta con la que fueron tomadas, incluso si esa versión fue tomada en modo offline y sincronizada posteriormente.
 
 ### 9.6 Duplicación y Plantillas
 
@@ -429,9 +434,11 @@ Cada encuesta tiene los siguientes metadatos:
 - Estado.
 - Versión actual.
 - **Etiquetas/categorías** (asignadas por administradores para clasificación y búsqueda).
-- Trabajo(s) de campo al que está asignada.
+- Trabajo(s) de campo al que está asignada *(relación, ver nota al pie de esta sección)*.
 
 Las **preguntas individuales** también pueden tener etiquetas propias, facilitando el análisis por categoría (ej.: filtrar todas las preguntas de intención de voto en múltiples encuestas).
+
+El campo **trabajo(s) de campo** no es un metadato intrínseco de la encuesta, sino una **relación gestionada desde el trabajo de campo**. Una encuesta puede existir sin estar asignada a ningún trabajo, y puede estar asignada a múltiples trabajos simultáneamente.
 
 ---
 
@@ -446,6 +453,7 @@ La PWA de encuestadores está diseñada para funcionar **sin conexión a interne
 - Los trabajos de campo, encuestas y configuración se sincronizan al dispositivo cuando hay conexión.
 - Las respuestas y datos recopilados se almacenan localmente en **IndexedDB** mediante **Service Workers**.
 - Al restablecer la conexión, los datos se sincronizan automáticamente con el servidor.
+- **Política de conflictos en la sincronización:** el servidor **acepta siempre** las respuestas offline. Si al sincronizar detecta conflictos (cuota del punto superada, trabajo de campo finalizado durante la desconexión, o encuesta en una versión ya reemplazada), acepta los datos pero los **marca con un flag de advertencia** visible para supervisores y administradores. Los datos nunca se descartan; las respuestas conflictivas quedan disponibles para revisión y decisión manual.
 - La app es **instalable** como PWA en el dispositivo del encuestador (Android/iOS/escritorio).
 
 #### 10.1.2 PWA de Administración (offline limitado)
@@ -479,8 +487,8 @@ Si el GPS no está disponible o el usuario no otorgó permisos, la encuesta **pu
 Al iniciar cada encuesta, el encuestador registra datos básicos del encuestado:
 
 **Fijos (siempre requeridos):**
-- Edad (número entero o rango etario, según configuración).
-- Género.
+- **Género.**
+- **Edad:** configurable por trabajo de campo como *número entero* (campo numérico libre) o como *rango etario* (selector de rangos predefinidos, ej: 18–25, 26–35, 36–50, 51+). Los rangos disponibles se definen en la configuración global del sistema y son reutilizables en todos los trabajos de campo.
 
 **Adicionales configurables por trabajo de campo** (ejemplos: nivel educativo, ocupación, zona de residencia, etc.).
 
@@ -497,6 +505,8 @@ Si una cuota ya está completa para el perfil demográfico del encuestado, se **
 ### 10.5 Pausa y Reanudación
 
 Las encuestas en curso pueden **pausarse y retomarse posteriormente**, incluso offline. El estado de la encuesta pausada queda guardado localmente.
+
+**Expiración de encuestas pausadas:** una encuesta pausada que no se retome dentro de las **72 horas** posteriores a su pausa se marca automáticamente como **abandonada**. Los datos parciales se conservan pero no se incluyen en los resultados. El supervisor y el administrador son notificados. Este valor es configurable en la configuración global del sistema.
 
 ### 10.6 Incidencias
 
@@ -520,7 +530,7 @@ Cuando un encuestador inicia una encuesta (presiona "Iniciar Encuesta"), se emit
 
 Al finalizar la encuesta, el evento se actualiza reflejando la finalización. Este seguimiento **solo funciona con conexión a Internet activa**; si el encuestador está offline, la encuesta se registra localmente y los eventos de inicio/finalización se sincronizan al reconectarse.
 
-### 10.8 Estadísticas del Encuestador
+### 10.9 Estadísticas del Encuestador
 
 Los encuestadores **no visualizan estadísticas de desempeño** propias en la PWA. Solo ven los trabajos asignados, las encuestas pendientes y el progreso de cuotas del punto donde trabajan.
 
@@ -794,7 +804,7 @@ El login se implementa en **dos pasos**, idéntico al de la PWA de encuestadores
 - Vista de historial de actividad del usuario.
 
 #### 16.2.4 Gestión de Trabajos de Campo
-> *Acceso: Administrador, Supervisor (lectura + gestión de asignaciones)*
+> *Acceso: Administrador, Supervisor (lectura + gestión de asignaciones), Analista de Datos (solo lectura)*
 
 - Tabla de trabajos de campo con filtros por estado, fecha, etc.
 - Crear / editar / archivar trabajos de campo.
@@ -851,7 +861,7 @@ El login se implementa en **dos pasos**, idéntico al de la PWA de encuestadores
 - Vista previa antes de publicar.
 
 #### 16.2.9 Mapa de Monitoreo en Tiempo Real
-> *Acceso: Administrador, Supervisor*
+> *Acceso: Administrador, Supervisor, Analista de Datos (solo lectura)*
 
 - **Mapa de Google Maps** con:
   - Marcadores de puntos de muestreo con estado de cuotas (coloreados), mostrando cantidades y porcentajes.
@@ -923,7 +933,11 @@ El login se implementa en **dos pasos**, idéntico al de la PWA de encuestadores
 - **Documentación:** Swagger/OpenAPI autogenerado y accesible en `/api/docs`.
 - **Autenticación:** Bearer token (JWT access token) en todos los endpoints protegidos.
 - **Respuestas consistentes:** estructura estándar de respuesta `{ data, meta, error }`.
-- **Paginación:** basada en cursor o en offset/limit, consistente en todos los listados.
+- **Paginación:** se usan dos estrategias según el tipo de recurso:
+  - **Cursor-based** para recursos con actualización frecuente o feeds en tiempo real: notificaciones, auditoría, respuestas/sync.
+  - **Offset/limit** para listados tabulares estándar: usuarios, encuestas, trabajos de campo, puntos de muestreo, informes.
+- **Autorización:** modelo **RBAC simple** (basado exclusivamente en rol). Cada endpoint verifica que el usuario tenga el rol requerido; no existen permisos granulares individuales por usuario. Si en el futuro se requiere granularidad mayor, se define en especificaciones de una versión posterior.
+- **Advertencias de cuota:** cuando el servidor acepta datos que superen una cuota, el endpoint devuelve HTTP `200 OK` con el campo `meta.advertencias` en la respuesta, listando los conflictos detectados (no se usa HTTP 4xx para estos casos, ya que los datos son aceptados).
 
 ### 17.2 Módulos Principales
 
@@ -978,13 +992,32 @@ servicios:
 
 ### 18.3 Backup
 
-- **Frecuencia:** Backup automático diario de la base de datos MySQL.
+- **Frecuencia:** Backup automático diario de la base de datos MySQL **y de los objetos almacenados en MinIO** (imágenes de preguntas y opciones, PDFs de informes, imágenes de perfil).
 - **Retención:** 30 días.
-- **Almacenamiento de backups:** ubicación segura separada del servidor principal (a definir en implementación: bucket MinIO separado, almacenamiento externo, etc.).
+- **Almacenamiento de backups:** ubicación segura separada del servidor principal (a definir en implementación: bucket MinIO separado en servidor externo, almacenamiento en la nube, etc.).
 
-### 18.4 Variables de Entorno
+### 18.4 Migraciones de Base de Datos
+
+Prisma gestiona las migraciones del esquema. El procedimiento en producción es:
+
+1. Realizar backup de la base de datos **antes de aplicar cualquier migración**.
+2. Aplicar la migración con `prisma migrate deploy` (sin downtime en migraciones aditivas).
+3. En migraciones destructivas (eliminación de columnas, renombrado de tablas), planificar una ventana de mantenimiento con downtime controlado.
+4. Las migraciones fallidas deben revertirse usando el backup previo.
+
+### 18.5 Variables de Entorno
 
 Todas las configuraciones sensibles (credenciales de base de datos, claves API, secretos JWT, etc.) se gestionan mediante variables de entorno y **nunca se incluyen en el código fuente ni en el repositorio Git**.
+
+### 18.6 Monitoreo y Resiliencia
+
+- **Health checks:** la API expondrá un endpoint `/api/health` que verifica el estado de los servicios dependientes (MySQL, Redis, MinIO).
+- **Logging:** los contenedores escriben logs a stdout. En producción se redirigen a un archivo o servicio centralizado (a definir en implementación).
+- **Comportamiento ante caída de servicios dependientes:**
+  - **Redis caído:** la API continúa operando para endpoints que no requieren caché ni WebSockets. Las funcionalidades de tiempo real quedan suspendidas.
+  - **MinIO caído:** los endpoints de subida/descarga de archivos devuelven error. El resto del sistema continúa operando.
+  - **MySQL caído:** la API devuelve error 503 en todos los endpoints que requieren persistencia.
+- **Retry en emails:** el sistema de emails transaccionales implementa reintentos automáticos (máximo 3 intentos con backoff exponencial). Si el envío falla tras los reintentos, se registra en el log de auditoría y se notifica al administrador. Los emails usan templates HTML (a diseñar en implementación).
 
 ---
 
@@ -1092,7 +1125,47 @@ Las siguientes funcionalidades están identificadas como **deseables para versio
 | Internacionalización (i18n)            | Soporte de múltiples idiomas en la interfaz. |
 | Integración con herramientas de BI     | Conexión directa con Power BI, Tableau, etc. |
 | Sub-agentes de IA definidos            | Organización detallada del flujo de desarrollo con IA. |
+| Impersonación de usuarios             | El administrador puede iniciar sesión como otro usuario para soporte. Requiere audit log detallado y banner de impersonación en la UI. |
+| Permisos granulares (RBAC avanzado)    | Ampliar el modelo de permisos más allá de roles, permitiendo configuración granular por usuario o recurso. |
 
 ---
 
-*Fin del documento de especificaciones v1.1.0*
+## 23. Límites del Sistema y Política de Datos
+
+### 23.1 Límites de Negocio
+
+La siguiente tabla define los límites máximos de las entidades del sistema. Son configurables en tiempo de despliegue mediante variables de entorno.
+
+| Entidad                          | Límite |
+|----------------------------------|--------|
+| Preguntas por encuesta           | 200 |
+| Opciones por pregunta            | 50 |
+| Sub-preguntas en una matriz      | 30 |
+| Secciones por encuesta           | 30 |
+| Variables demográficas adicionales por trabajo | 20 |
+| Tipos de incidencias configurables | 50 |
+| Encuestadores por punto de muestreo | Sin límite explícito (limitado por cuotas) |
+| Tamaño máximo de imagen subida   | 5 MB |
+| Longitud máxima de respuesta abierta | 2.000 caracteres |
+| Trabajos de campo activos simultáneos | Sin límite implícito (escalabilidad del VPS) |
+
+### 23.2 Gestión de Imágenes
+
+Todas las imágenes subidas al sistema (fotos de perfil, imágenes en preguntas y opciones, imágenes en informes) se almacenan en **MinIO** y siguen estas reglas:
+
+- **Formatos aceptados:** JPEG, PNG, WebP y GIF (estático).
+- **Tamaño máximo:** 5 MB por imagen.
+- **Procesamiento al subir:** el servidor genera automáticamente versiones optimizadas (thumbnail y versión web comprimida) en formato WebP. Las imágenes originales también se conservan.
+- **Acceso:** las imágenes se sirven a través de la API (`/api/v1/archivos/`) con control de autorización según el contexto (pública para imágenes de encuestas públicas, autenticada para el resto). No se expone el bucket de MinIO directamente al cliente.
+- **Optimización para campo:** la PWA de encuestadores siempre solicita la versión comprimida (WebP) para minimizar el uso de datos móviles.
+
+### 23.3 Retención de Datos y Privacidad
+
+- **Soft delete:** los registros eliminados lógicamente (usuarios, puntos de muestreo, encuestas) se conservan indefinidamente para mantener integridad histórica y trazabilidad de auditoría.
+- **Datos de encuestados:** las respuestas capturadas no contienen información personal identificable (PII) del encuestado. Solo se registran datos demográficos agrupados (edad/rango, género, etc.), nunca nombre ni documento.
+- **Datos de encuestadores:** sí son datos personales y están sujetos a la **Ley 25.326 de Protección de Datos Personales** (Argentina). El sistema debe permitir la eliminación definitiva (hard delete) de datos de encuestadores a pedido, **excepto** cuando estén vinculados a respuestas históricas (en ese caso se anonimiza el registro del encuestador, preservando las respuestas).
+- **Purga de datos eliminados:** no existe proceso automático de purga (hard delete). Las eliminaciones definitivas son operaciones manuales realizadas por el Súper Administrador.
+
+---
+
+*Fin del documento de especificaciones v1.2.0*
